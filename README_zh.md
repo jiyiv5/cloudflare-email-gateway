@@ -10,7 +10,8 @@
 - **超低延迟**：部署在 Cloudflare 全球边缘节点，响应极快。
 - **安全鉴权**：内置 Client Token 机制，防止接口被他人恶意盗刷。
 - **配置分离**：完全通过环境变量控制发信人身份，代码无任何硬编码，方便开源复用。
-- **全栈通用**：同时支持纯文本（Text）和富文本（HTML）混合格式。
+- **写信页面**：访问 Worker 地址即可打开类似邮件系统的发信界面，并交给 Cloudflare Access 保护。
+- **全栈通用**：支持多个收件人、Cc、Bcc、Reply-To、富文本、纯文本 fallback 和附件。
 
 ---
 
@@ -21,14 +22,52 @@
 | 变量名 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | `RESEND_API_KEY` | **Secret (加密)** | 填写从 Resend 后台申请的 API 密钥。 |
-| `CLIENT_TOKEN` | **Secret (加密)** | 自定义一个高强度的随机字符串，作为调用此接口时的 Bearer 鉴权令牌。 |
+| `CLIENT_TOKEN` | **Secret (加密)** | 可选。旧版 `POST /` API 使用的 Bearer 鉴权令牌；Access 保护的写信页面不需要填写它。 |
 | `FROM_EMAIL` | **Variable (文本)** | 你的发信人展示文本与真实邮箱（例如：`通知机器人 <i@mydomain.com>`）。 |
+
+---
+
+## 📨 写信页面
+
+部署完成后，在浏览器中打开你的 Worker 地址：
+
+```text
+https://<你的Worker名称>.<你的子域名>.workers.dev/
+```
+
+这里会显示一个类似邮件系统的写信页面，用于手动输入邮箱并发送邮件。当前页面支持：
+
+- 多个收件人，输入后会以标签形式展示。
+- Cc、Bcc，以及可选 Reply-To。
+- 主题和富文本正文编辑。
+- 常用格式操作：标题、加粗、斜体、下划线、删除线、列表、缩进、对齐、文字颜色、背景高亮、链接、撤销、重做、清除格式。
+- 自动生成纯文本 fallback，提升不同邮件客户端的兼容性。
+- 附件上传，页面侧限制附件总大小不超过 10 MB。
+
+请在 Cloudflare Zero Trust 中为这个 Worker 域名配置 Access 应用。页面会提交到同一个 Worker 的 `POST /api/send`，用户只需要通过 Access 登录，不需要输入 `CLIENT_TOKEN`。
+
+推荐的 Access 配置方式：
+
+1. 在 Cloudflare Zero Trust 中为 Worker 域名创建 Access 应用。
+2. 将访问范围限制到允许使用的用户、用户组或邮箱域名。
+3. Worker 环境变量中继续配置 `RESEND_API_KEY` 和 `FROM_EMAIL`。
+4. 如果只使用 Access 保护的写信页面，可以不配置 `CLIENT_TOKEN`。
+
+---
+
+## 🔀 路由说明
+
+| 路由 | 方法 | 用途 | 鉴权方式 |
+| :--- | :--- | :--- | :--- |
+| `/` | `GET` | 打开写信页面。 | 请用 Cloudflare Access 保护 Worker 域名。 |
+| `/api/send` | `POST` | 写信页面提交发信请求。 | 不使用 `CLIENT_TOKEN`，依赖 Cloudflare Access。 |
+| `/` | `POST` | 兼容旧版 JSON API 调用。 | 如果配置了 `CLIENT_TOKEN`，需要 `Authorization: Bearer <CLIENT_TOKEN>`。 |
 
 ---
 
 ## 🚀 API 调用示例
 
-向你的 Worker 地址发送 `POST` 请求进行发信：
+旧版 token API 仍保留在 `POST /`：
 
 - **请求地址 (URL):** `https://<你的Worker名称>.<你的子域名>.workers.dev`
 - **请求头 (Headers):**
