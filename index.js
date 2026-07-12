@@ -1,18 +1,25 @@
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
 };
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const ACCESS_JWKS_CACHE = new Map();
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/") {
-      return htmlResponse(renderComposePage(request, env));
+      const access = await requireAccess(request, env);
+      if (!access.ok) return access.response;
+      return htmlResponse(renderComposePage(request, env, access.userEmail));
     }
 
     if (request.method === "POST" && url.pathname === "/api/send") {
+      const access = await requireAccess(request, env);
+      if (!access.ok) return access.response;
       return handleSendRequest(request, env, { requireClientToken: false });
     }
 
@@ -23,6 +30,68 @@ export default {
     return jsonResponse({ error: "Not Found" }, 404);
   },
 };
+
+async function requireAccess(request, env) {
+  const teamDomain = normalizeAccessTeamDomain(env.ACCESS_TEAM_DOMAIN);
+  const audience = String(env.ACCESS_AUD || "").trim();
+
+  if (!teamDomain || !audience) {
+    return {
+      ok: false,
+      response: jsonResponse({
+        error: "Cloudflare Access is not configured. Set ACCESS_TEAM_DOMAIN and ACCESS_AUD.",
+      }, 403),
+    };
+  }
+
+  const token = request.headers.get("cf-access-jwt-assertion");
+  if (!token) {
+    return {
+      ok: false,
+      response: jsonResponse({ error: "Cloudflare Access authentication is required." }, 401),
+    };
+  }
+
+  try {
+    const jwks = getAccessJwks(teamDomain);
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: teamDomain,
+      audience,
+    });
+
+    return {
+      ok: true,
+      userEmail: String(
+        payload.email ||
+        request.headers.get("Cf-Access-Authenticated-User-Email") ||
+        "已认证用户",
+      ),
+    };
+  } catch {
+    return {
+      ok: false,
+      response: jsonResponse({ error: "Invalid Cloudflare Access token." }, 403),
+    };
+  }
+}
+
+function normalizeAccessTeamDomain(value) {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw) return "";
+  if (raw.startsWith("https://")) return raw;
+  if (raw.startsWith("http://")) return raw.replace(/^http:\/\//, "https://");
+  return `https://${raw}`;
+}
+
+function getAccessJwks(teamDomain) {
+  const certsUrl = `${teamDomain}/cdn-cgi/access/certs`;
+  let jwks = ACCESS_JWKS_CACHE.get(certsUrl);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(certsUrl));
+    ACCESS_JWKS_CACHE.set(certsUrl, jwks);
+  }
+  return jwks;
+}
 
 async function handleSendRequest(request, env, options) {
   try {
@@ -185,8 +254,7 @@ function htmlResponse(body) {
   });
 }
 
-function renderComposePage(request, env) {
-  const accessUser = request.headers.get("Cf-Access-Authenticated-User-Email") || "";
+function renderComposePage(request, env, accessUser) {
   const fromEmail = env.FROM_EMAIL || "未配置 FROM_EMAIL";
 
   return `<!doctype html>
@@ -851,7 +919,7 @@ function renderComposePage(request, env) {
 
         <section class="side-section">
           <h2>发送说明</h2>
-          <p>此页面应由 Cloudflare Access 应用保护；页面提交到同一个 Worker 的 <strong>/api/send</strong>，不会要求填写 CLIENT_TOKEN。</p>
+          <p>此页面已要求 Cloudflare Access JWT 验证；页面提交到同一个 Worker 的 <strong>/api/send</strong>，不会要求填写 CLIENT_TOKEN。</p>
         </section>
       </aside>
     </main>

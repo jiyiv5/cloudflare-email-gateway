@@ -2,14 +2,18 @@
   "name": "email-gateway",
   "version": "1.0.0",
   "description": "",
-  "main": "send_email.js",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
+  "dependencies": {
+    "jose": "^6.1.2"
+  },
   "devDependencies": {
     "wrangler": "^4.100.0"
   }
