@@ -1,3 +1,67 @@
+const JSON_HEADERS = {
+  "Content-Type": "application/json; charset=utf-8",
+};
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_FROM_NAME_LENGTH = 100;
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method !== "POST" || url.pathname !== "/") {
+      return jsonResponse({ error: "Not Found" }, 404);
+    }
+
+    return handleSendRequest(request, env);
+  },
+};
+
+async function handleSendRequest(request, env) {
+  try {
+    if (env.CLIENT_TOKEN) {
+      const authHeader = request.headers.get("Authorization");
+      if (authHeader !== `Bearer ${env.CLIENT_TOKEN}`) {
+        return jsonResponse({ error: "Unauthorized" }, 401);
+      }
+    }
+
+    const payload = await request.json();
+    const normalized = normalizeEmailPayload(payload);
+    if (normalized.error) {
+      return jsonResponse({ error: normalized.error }, 400);
+    }
+
+    const fromEmail = String(env.FROM_EMAIL || "").trim();
+    if (!fromEmail) {
+      return jsonResponse({
+        error: "Configuration Error: FROM_EMAIL environment variable is not defined.",
+      }, 500);
+    }
+
+    if (!env.RESEND_API_KEY) {
+      return jsonResponse({
+        error: "Configuration Error: RESEND_API_KEY secret is not defined.",
+      }, 500);
+    }
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: formatFromAddress(fromEmail, normalized.fromName),
+        to: normalized.to,
+        cc: normalized.cc,
+        bcc: normalized.bcc,
+        reply_to: normalized.replyTo,
+        subject: normalized.subject,
+        text: normalized.text,
+        html: normalized.html,
+        attachments: normalized.attachments,
+      }),
+    });
 
     const data = await response.json();
     if (!response.ok) {
