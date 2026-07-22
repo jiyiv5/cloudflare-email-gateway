@@ -3,7 +3,7 @@ const JSON_HEADERS = {
 };
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const MAX_FROM_NAME_LENGTH = 100;
+const MAX_SENDER_NAME_LENGTH = 100;
 
 export default {
   async fetch(request, env) {
@@ -44,7 +44,7 @@ async function handleSendRequest(request, env) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: formatFromAddress(normalized.fromEmail, normalized.fromName),
+        from: normalized.from,
         to: normalized.to,
         cc: normalized.cc,
         bcc: normalized.bcc,
@@ -68,8 +68,7 @@ async function handleSendRequest(request, env) {
 }
 
 function normalizeEmailPayload(payload) {
-  const fromEmail = String(payload.from ?? "").trim();
-  const fromName = String(payload.name ?? "").trim();
+  const sender = normalizeSender(payload.from);
   const to = normalizeAddressList(payload.to);
   const cc = normalizeAddressList(payload.cc);
   const bcc = normalizeAddressList(payload.bcc);
@@ -79,14 +78,7 @@ function normalizeEmailPayload(payload) {
   const text = String(payload.text || "").trim();
   const attachments = normalizeAttachments(payload.attachments);
 
-  if (!fromEmail) return { error: "Sender email is required." };
-  if (!isValidEmail(fromEmail)) return { error: `Invalid sender email address: ${fromEmail}` };
-  if (fromName.length > MAX_FROM_NAME_LENGTH) {
-    return { error: `Sender name must be ${MAX_FROM_NAME_LENGTH} characters or fewer.` };
-  }
-  if (/[\u0000-\u001f\u007f]/.test(fromName)) {
-    return { error: "Sender name contains invalid control characters." };
-  }
+  if (sender.error) return { error: sender.error };
   if (!to.length) return { error: "At least one recipient is required." };
   if (!subject) return { error: "Subject is required." };
   if (!html && !text) return { error: "Email content is required." };
@@ -100,8 +92,7 @@ function normalizeEmailPayload(payload) {
   if (attachments.error) return { error: attachments.error };
 
   return {
-    fromEmail,
-    fromName: fromName || undefined,
+    from: sender.value,
     to,
     cc: cc.length ? cc : undefined,
     bcc: bcc.length ? bcc : undefined,
@@ -111,6 +102,32 @@ function normalizeEmailPayload(payload) {
     text: text || stripHtml(html),
     attachments: attachments.files.length ? attachments.files : undefined,
   };
+}
+
+function normalizeSender(value) {
+  const sender = String(value ?? "").trim();
+  if (!sender) return { error: "Sender is required." };
+  if (/[\u0000-\u001f\u007f]/.test(sender)) {
+    return { error: "Sender contains invalid control characters." };
+  }
+  if (isValidEmail(sender)) return { value: sender };
+
+  const match = sender.match(/^([^<>]+?)\s*<([^<>]+)>$/);
+  if (!match) {
+    return { error: 'Invalid sender format. Use "email@example.com" or "Name <email@example.com>".' };
+  }
+
+  const displayName = match[1].trim();
+  const email = match[2].trim();
+  if (!displayName) {
+    return { error: 'Invalid sender format. Use "email@example.com" or "Name <email@example.com>".' };
+  }
+  if (!isValidEmail(email)) return { error: `Invalid sender email address: ${email}` };
+  if (displayName.length > MAX_SENDER_NAME_LENGTH) {
+    return { error: `Sender name must be ${MAX_SENDER_NAME_LENGTH} characters or fewer.` };
+  }
+
+  return { value: formatFromAddress(email, displayName) };
 }
 
 function formatFromAddress(fromEmail, fromName) {
