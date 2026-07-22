@@ -31,13 +31,6 @@ async function handleSendRequest(request, env) {
       return jsonResponse({ error: normalized.error }, 400);
     }
 
-    const fromEmail = String(env.FROM_EMAIL || "").trim();
-    if (!fromEmail) {
-      return jsonResponse({
-        error: "Configuration Error: FROM_EMAIL environment variable is not defined.",
-      }, 500);
-    }
-
     if (!env.RESEND_API_KEY) {
       return jsonResponse({
         error: "Configuration Error: RESEND_API_KEY secret is not defined.",
@@ -51,7 +44,7 @@ async function handleSendRequest(request, env) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: formatFromAddress(fromEmail, normalized.fromName),
+        from: formatFromAddress(normalized.fromEmail, normalized.fromName),
         to: normalized.to,
         cc: normalized.cc,
         bcc: normalized.bcc,
@@ -75,7 +68,8 @@ async function handleSendRequest(request, env) {
 }
 
 function normalizeEmailPayload(payload) {
-  const fromName = String(payload.fromName ?? payload.from_name ?? "").trim();
+  const fromEmail = String(payload.from ?? "").trim();
+  const fromName = String(payload.name ?? "").trim();
   const to = normalizeAddressList(payload.to);
   const cc = normalizeAddressList(payload.cc);
   const bcc = normalizeAddressList(payload.bcc);
@@ -85,6 +79,8 @@ function normalizeEmailPayload(payload) {
   const text = String(payload.text || "").trim();
   const attachments = normalizeAttachments(payload.attachments);
 
+  if (!fromEmail) return { error: "Sender email is required." };
+  if (!isValidEmail(fromEmail)) return { error: `Invalid sender email address: ${fromEmail}` };
   if (fromName.length > MAX_FROM_NAME_LENGTH) {
     return { error: `Sender name must be ${MAX_FROM_NAME_LENGTH} characters or fewer.` };
   }
@@ -104,6 +100,7 @@ function normalizeEmailPayload(payload) {
   if (attachments.error) return { error: attachments.error };
 
   return {
+    fromEmail,
     fromName: fromName || undefined,
     to,
     cc: cc.length ? cc : undefined,
@@ -119,9 +116,8 @@ function normalizeEmailPayload(payload) {
 function formatFromAddress(fromEmail, fromName) {
   if (!fromName) return fromEmail;
 
-  const configuredMailbox = fromEmail.match(/<([^<>]+)>\s*$/)?.[1]?.trim() || fromEmail;
   const escapedName = fromName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  return `"${escapedName}" <${configuredMailbox}>`;
+  return `"${escapedName}" <${fromEmail}>`;
 }
 
 function normalizeAddressList(value) {
