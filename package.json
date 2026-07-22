@@ -11,9 +11,6 @@
   "author": "",
   "license": "ISC",
   "type": "module",
-  "dependencies": {
-    "jose": "^6.1.2"
-  },
   "devDependencies": {
     "wrangler": "^4.100.0"
   }
